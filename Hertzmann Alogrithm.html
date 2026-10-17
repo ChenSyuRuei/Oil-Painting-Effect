@@ -1,0 +1,444 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0, user-scalable=yes">
+    <title>Hertzmann Algorithm</title>
+    <style>
+        body { margin: 0; padding: 0; background: #000; color: #fff; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; overflow: hidden; width: 100vw; height: 100vh; }
+        canvas { display: block; width: 100%; height: 100%; object-fit: contain; background: #000; }
+
+        #control-panel { 
+            position: fixed; left: 0; top: 0; 
+            background-color: rgba(15, 15, 20, 0.85); border: 1px solid rgba(255, 255, 255, 0.1); 
+            backdrop-filter: blur(5px); color: #ddd; 
+            padding: 15px; 
+            border-radius: 8px; box-shadow: 0 4px 10px rgba(0,0,0,0.5); 
+            z-index: 1000; 
+            width: 220px; 
+            will-change: transform;
+        }
+        h2 { margin: 0 0 12px 0; font-size: 16px; color: #fff; text-transform: uppercase; letter-spacing: 0.5px; border-bottom: 1px solid rgba(255,255,255,0.2); padding-bottom: 6px; }
+        .param-row { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; font-size: 14px; }
+        .param-name { display: flex; align-items: center; gap: 6px; }
+        .shortcut { background: #333; color: #ffaa00; padding: 2px 6px; border-radius: 3px; font-family: monospace; font-weight: bold; font-size: 11px; }
+        .param-value { font-family: monospace; font-size: 16px; color: #4CAF50; font-weight: bold; transition: color 0.15s ease; }
+        .instruction { margin-top: 12px; font-size: 12px; color: #888; line-height: 1.4; border-top: 1px solid rgba(255,255,255,0.1); padding-top: 8px; }
+        
+        .action-group { display: flex; gap: 5px; margin-top: 12px; border-top: 1px solid rgba(255,255,255,0.1); padding-top: 12px; }
+        .btn { flex: 1; background-color: #4CAF50; color: white; border: none; padding: 6px 0; border-radius: 4px; cursor: pointer; font-weight: bold; text-align: center; font-size: 12px; transition: background 0.2s, opacity 0.2s; }
+        .btn:hover:not(:disabled) { background: #45a049; }
+        .btn:disabled { background: #555; cursor: not-allowed; opacity: 0.7; }
+        #file-upload { display: none; }
+
+        .status { font-family: monospace; color: #ffaa00; font-size: 13px; font-weight: bold; margin-top: 10px; text-align: center; }
+    </style>
+</head>
+<body>
+
+    <canvas id="canvas"></canvas>
+
+    <div id="control-panel">
+        <h2>Controls</h2>
+        <div class="param-row"><div class="param-name"><span class="shortcut">1</span> Max Radius</div><div class="param-value" id="val-max-r">32</div></div>
+        <div class="param-row"><div class="param-name"><span class="shortcut">2</span> Min Radius</div><div class="param-value" id="val-min-r">2</div></div>
+        <div class="param-row"><div class="param-name"><span class="shortcut">3</span> Threshold</div><div class="param-value" id="val-threshold">25</div></div>
+        <div class="param-row"><div class="param-name"><span class="shortcut">4</span> Min Stroke</div><div class="param-value" id="val-min-stroke">4</div></div>
+        <div class="param-row"><div class="param-name"><span class="shortcut">5</span> Max Stroke</div><div class="param-value" id="val-max-stroke">20</div></div>
+        <div class="param-row"><div class="param-name"><span class="shortcut">6</span> Curvature</div><div class="param-value" id="val-curve">0.90</div></div>
+
+        <div class="instruction">Hold num key & press <b>+/-</b></div>
+
+        <div class="action-group">
+            <label for="file-upload" class="btn btn-secondary">Upload</label>
+            <input type="file" id="file-upload" accept="image/*">
+            <button id="btn-paint" class="btn" disabled>Start</button>
+            <button id="btn-download" class="btn" disabled>Download</button>
+        </div>
+        <div class="status" id="status-text">Waiting...</div>
+    </div>
+
+    <script>
+        const canvas = document.getElementById('canvas');
+        const ctx = canvas.getContext('2d', { willReadFrequently: true });
+        const statusText = document.getElementById('status-text');
+        const btnPaint = document.getElementById('btn-paint');
+        const btnDownload = document.getElementById('btn-download');
+        const panel = document.getElementById('control-panel');
+        
+        let sourceImage = new Image();
+        let sourceData = null; 
+        let width = 0, height = 0;
+
+        // === 參數系統設定 ===
+        const params = {
+            maxR: { val: 32, min: 2, max: 64, step: 16, ui: document.getElementById('val-max-r') },
+            minR: { val: 2, min: 1, max: 16, step: 1, ui: document.getElementById('val-min-r') },
+            threshold: { val: 25, min: 5, max: 200, step: 5, ui: document.getElementById('val-threshold') },
+            minStroke: { val: 4, min: 0, max: 20, step: 1, ui: document.getElementById('val-min-stroke') },
+            maxStroke: { val: 20, min: 0, max: 100, step: 2, ui: document.getElementById('val-max-stroke') },
+            curveFilter: { val: 0.9, min: 0.0, max: 1.0, step: 0.1, ui: document.getElementById('val-curve') }
+        };
+
+        const keyMap = { '1': 'maxR', '2': 'minR', '3': 'threshold', '4': 'minStroke', '5': 'maxStroke', '6': 'curveFilter' };
+        const pressedKeys = new Set();
+
+        function updateUI() {
+            params.maxR.ui.textContent = params.maxR.val;
+            params.minR.ui.textContent = params.minR.val;
+            params.threshold.ui.textContent = params.threshold.val;
+            params.minStroke.ui.textContent = params.minStroke.val;
+            params.maxStroke.ui.textContent = params.maxStroke.val;
+            params.curveFilter.ui.textContent = params.curveFilter.val.toFixed(2);
+        }
+        updateUI();
+
+        function updateHighlight() {
+            for (let key in keyMap) {
+                const paramName = keyMap[key];
+                if (pressedKeys.has(key)) {
+                    params[paramName].ui.style.color = '#ff4444';
+                } else {
+                    params[paramName].ui.style.color = '#4CAF50';
+                }
+            }
+        }
+
+        function modifyParam(paramKey, isIncrease) {
+            const p = params[paramKey];
+            p.val = isIncrease ? Math.min(p.max, p.val + p.step) : Math.max(p.min, p.val - p.step);
+            p.val = Math.round(p.val * 100) / 100; // 避免浮點數誤差
+            
+            // 邏輯防呆保護
+            if (paramKey === 'maxR' && p.val < params.minR.val) p.val = params.minR.val;
+            if (paramKey === 'minR' && p.val > params.maxR.val) p.val = params.maxR.val;
+            if (paramKey === 'maxStroke' && p.val < params.minStroke.val) p.val = params.minStroke.val;
+            if (paramKey === 'minStroke' && p.val > params.maxStroke.val) p.val = params.maxStroke.val;
+            
+            updateUI();
+        }
+
+        window.addEventListener('keydown', function(e) {
+            pressedKeys.add(e.key);
+            updateHighlight(); 
+            const isIncrease = e.key === '=' || e.key === '+';
+            const isDecrease = e.key === '-';
+            if (!isIncrease && !isDecrease) return;
+            for (let key in keyMap) {
+                if (pressedKeys.has(key)) modifyParam(keyMap[key], isIncrease);
+            }
+        });
+
+        window.addEventListener('keyup', e => {
+            pressedKeys.delete(e.key);
+            updateHighlight(); 
+        });
+
+        // ==========================================
+
+        function initCanvas() {
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
+            ctx.fillStyle = '#000';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+        }
+        initCanvas();
+
+        function updateUIPositions() {
+            if (!window.visualViewport) return;
+            const vv = window.visualViewport;
+            const scale = 1 / vv.scale;
+            const x = vv.offsetLeft + 10 * scale; 
+            const y = vv.offsetTop + (vv.height / 2) - (panel.offsetHeight / 2) * scale; 
+            panel.style.transform = `translate3d(${x}px, ${y}px, 0) scale(${scale})`;
+            panel.style.transformOrigin = 'left top';
+        }
+
+        if (window.visualViewport) {
+            window.visualViewport.addEventListener('resize', updateUIPositions);
+            window.visualViewport.addEventListener('scroll', updateUIPositions);
+            requestAnimationFrame(updateUIPositions);
+        }
+
+        function getPixel(imgData, x, y) {
+            if (x < 0) x = 0; if (x >= width) x = width - 1;
+            if (y < 0) y = 0; if (y >= height) y = height - 1;
+            let i = (y * width + x) * 4;
+            return [imgData.data[i], imgData.data[i+1], imgData.data[i+2]];
+        }
+
+        function getLuminance(rgb) {
+            return 0.30 * rgb[0] + 0.59 * rgb[1] + 0.11 * rgb[2]; 
+        }
+
+        function computeGradientData(imgData) {
+            let gradMag = new Float32Array(width * height);
+            let gradDir = new Float32Array(width * height * 2); 
+
+            for (let y = 1; y < height - 1; y++) {
+                for (let x = 1; x < width - 1; x++) {
+                    let tl = getLuminance(getPixel(imgData, x-1, y-1));
+                    let tc = getLuminance(getPixel(imgData, x, y-1));
+                    let tr = getLuminance(getPixel(imgData, x+1, y-1));
+                    let ml = getLuminance(getPixel(imgData, x-1, y));
+                    let mr = getLuminance(getPixel(imgData, x+1, y));
+                    let bl = getLuminance(getPixel(imgData, x-1, y+1));
+                    let bc = getLuminance(getPixel(imgData, x, y+1));
+                    let br = getLuminance(getPixel(imgData, x+1, y+1));
+
+                    let dx = (tr + 2*mr + br) - (tl + 2*ml + bl);
+                    let dy = (bl + 2*bc + br) - (tl + 2*tc + tr);
+                    
+                    let mag = Math.sqrt(dx*dx + dy*dy);
+                    let i = y * width + x;
+                    gradMag[i] = mag;
+                    if (mag > 0) {
+                        gradDir[i*2] = dx / mag;
+                        gradDir[i*2 + 1] = dy / mag;
+                    }
+                }
+            }
+            return { mag: gradMag, dir: gradDir };
+        }
+
+        function blurImage(imgData, radius) {
+            if (radius <= 0) return imgData;
+            let tempCanvas = document.createElement('canvas');
+            tempCanvas.width = width; tempCanvas.height = height;
+            let tCtx = tempCanvas.getContext('2d');
+            tCtx.putImageData(imgData, 0, 0);
+            tCtx.globalAlpha = 0.5;
+            for(let i = -radius; i <= radius; i+=Math.max(1, radius/2)){
+                tCtx.drawImage(tempCanvas, i, 0);
+                tCtx.drawImage(tempCanvas, 0, i);
+            }
+            tCtx.globalAlpha = 1.0;
+            return tCtx.getImageData(0, 0, width, height);
+        }
+
+        function colorDiff(c1, c2) {
+            let r = c1[0] - c2[0], g = c1[1] - c2[1], b = c1[2] - c2[2];
+            return Math.sqrt(r*r + g*g + b*b); 
+        }
+
+        function shuffleArray(array) {
+            for (let i = array.length - 1; i > 0; i--) {
+                const j = Math.floor(Math.random() * (i + 1));
+                [array[i], array[j]] = [array[j], array[i]];
+            }
+        }
+
+        let renderConfig = {};
+
+        async function paint() {
+            btnPaint.disabled = true;
+            btnDownload.disabled = true;
+            
+            // 每次按下 Start，根據當下的 UI 更新畫圖邏輯
+            renderConfig = {
+                threshold: params.threshold.val,
+                minStrokeLength: params.minStroke.val,
+                maxStrokeLength: params.maxStroke.val,
+                curvatureFilter: params.curveFilter.val,
+                gridSize: 0.7,
+                blurFactor: 0.5
+            };
+
+            // 自動產生從 Max R 到 Min R 的筆觸序列陣列 (每次減半)
+            let radiiList = [];
+            let r = params.maxR.val;
+            while (r >= params.minR.val) {
+                radiiList.push(r);
+                if (r <= 1) break;
+                r = Math.floor(r / 2);
+            }
+            if (radiiList.length === 0) radiiList.push(params.minR.val);
+            renderConfig.radii = radiiList;
+            
+            ctx.fillStyle = '#000';
+            ctx.fillRect(0, 0, width, height);
+            sourceData = ctx.getImageData(0, 0, width, height);
+            
+            let hiddenCanvas = document.createElement('canvas');
+            hiddenCanvas.width = width; hiddenCanvas.height = height;
+            let hCtx = hiddenCanvas.getContext('2d');
+            hCtx.drawImage(sourceImage, 0, 0, width, height);
+            let originalImageData = hCtx.getImageData(0, 0, width, height);
+
+            for (let currentR of renderConfig.radii) {
+                statusText.innerText = `Painting R=${currentR}...`;
+                let blurRadius = Math.round(currentR * renderConfig.blurFactor);
+                let refImage = blurImage(originalImageData, blurRadius);
+                let gradient = computeGradientData(refImage);
+                await paintLayer(refImage, gradient, currentR);
+            }
+
+            statusText.innerText = "Done"; 
+            btnPaint.disabled = false;
+            btnDownload.disabled = false; 
+        }
+
+        async function paintLayer(refImage, gradient, R) {
+            let strokes = [];
+            let currentCanvasData = ctx.getImageData(0, 0, width, height);
+            let grid = Math.max(1, Math.round(renderConfig.gridSize * R)); 
+
+            for (let y = 0; y < height; y += grid) {
+                for (let x = 0; x < width; x += grid) {
+                    let refColor = getPixel(refImage, x, y);
+                    let canvasColor = getPixel(currentCanvasData, x, y);
+                    
+                    let isBaseLayer = (R === renderConfig.radii[0]);
+                    let error = isBaseLayer ? 99999 : colorDiff(refColor, canvasColor);
+
+                    if (error > renderConfig.threshold) {
+                        let stroke = makeSplineStroke(x, y, R, refImage, currentCanvasData, gradient);
+                        if (stroke) strokes.push(stroke); 
+                    }
+                }
+            }
+
+            shuffleArray(strokes);
+
+            let batchSize = 100; 
+            for (let i = 0; i < strokes.length; i += batchSize) {
+                for (let j = 0; j < batchSize && (i + j) < strokes.length; j++) {
+                    drawStroke(strokes[i + j]);
+                }
+                await new Promise(resolve => requestAnimationFrame(resolve));
+            }
+        }
+
+        function makeSplineStroke(x0, y0, R, refImage, canvasData, gradient) {
+            let strokeColor = getPixel(refImage, x0, y0); 
+            let points = [{x: x0, y: y0}];
+            let x = x0, y = y0;
+            let lastDx = 0, lastDy = 0; 
+
+            for (let i = 1; i <= renderConfig.maxStrokeLength; i++) { 
+                let px = Math.round(x), py = Math.round(y);
+                if (px < 0 || px >= width || py < 0 || py >= height) break;
+
+                if (i > renderConfig.minStrokeLength) {
+                    let currentColor = getPixel(refImage, px, py);
+                    let canvasColor = getPixel(canvasData, px, py);
+                    if (colorDiff(currentColor, canvasColor) < colorDiff(currentColor, strokeColor)) {
+                        break;
+                    }
+                }
+
+                let idx = py * width + px;
+                let gx, gy;
+                
+                if (gradient.mag[idx] === 0) {
+                    if (lastDx === 0 && lastDy === 0) {
+                        let angle = Math.random() * Math.PI * 2;
+                        gx = Math.cos(angle);
+                        gy = Math.sin(angle);
+                    } else {
+                        gx = lastDy;
+                        gy = -lastDx;
+                    }
+                } else {
+                    gx = gradient.dir[idx * 2];
+                    gy = gradient.dir[idx * 2 + 1];
+                }
+
+                let dx = -gy;
+                let dy = gx;
+
+                if (lastDx * dx + lastDy * dy < 0) {
+                    dx = -dx; dy = -dy;
+                }
+
+                let fc = renderConfig.curvatureFilter;
+                dx = fc * dx + (1 - fc) * lastDx;
+                dy = fc * dy + (1 - fc) * lastDy;
+                
+                let mag = Math.sqrt(dx*dx + dy*dy);
+                dx /= mag; dy /= mag; 
+
+                x = x + R * dx;
+                y = y + R * dy;
+                
+                lastDx = dx; lastDy = dy; 
+                points.push({x: x, y: y}); 
+            }
+
+            if (points.length < 2) {
+                points.push({x: points[0].x + 0.1, y: points[0].y});
+            }
+
+            return { points: points, color: strokeColor, radius: R };
+        }
+
+        function drawStroke(stroke) {
+            let path = new Path2D();
+            path.moveTo(stroke.points[0].x, stroke.points[0].y);
+            
+            for (let i = 1; i < stroke.points.length - 1; i++) {
+                let xc = (stroke.points[i].x + stroke.points[i + 1].x) / 2;
+                let yc = (stroke.points[i].y + stroke.points[i + 1].y) / 2;
+                path.quadraticCurveTo(stroke.points[i].x, stroke.points[i].y, xc, yc);
+            }
+            let lastPoint = stroke.points[stroke.points.length - 1];
+            path.lineTo(lastPoint.x, lastPoint.y);
+
+            let numBristles = Math.max(3, stroke.radius * 2); 
+            ctx.lineCap = 'round';
+            ctx.lineJoin = 'round';
+
+            for (let i = 0; i < numBristles; i++) {
+                ctx.save();
+                let offsetX = (Math.random() - 0.5) * stroke.radius;
+                let offsetY = (Math.random() - 0.5) * stroke.radius;
+                ctx.translate(offsetX, offsetY);
+                
+                ctx.lineWidth = Math.random() * 1.5 + 0.2;
+                let alpha = Math.random() * 0.4 + 0.1; 
+                ctx.strokeStyle = `rgba(${stroke.color[0]}, ${stroke.color[1]}, ${stroke.color[2]}, ${alpha})`;
+                
+                ctx.stroke(path);
+                ctx.restore();
+            }
+        }
+
+        document.getElementById('file-upload').addEventListener('change', function(e) {
+            let file = e.target.files[0];
+            if (!file) return;
+            let reader = new FileReader();
+            reader.onload = function(event) {
+                sourceImage.onload = function() {
+                    let maxDim = 800; 
+                    width = sourceImage.width;
+                    height = sourceImage.height;
+                    if (width > maxDim || height > maxDim) {
+                        let ratio = Math.min(maxDim / width, maxDim / height);
+                        width = Math.floor(width * ratio);
+                        height = Math.floor(height * ratio);
+                    }
+                    
+                    canvas.width = width;
+                    canvas.height = height;
+                    ctx.drawImage(sourceImage, 0, 0, width, height);
+                    
+                    statusText.innerText = "Ready";
+                    btnPaint.disabled = false;
+                    btnDownload.disabled = true; 
+                }
+                sourceImage.src = event.target.result;
+            }
+            reader.readAsDataURL(file);
+        });
+
+        btnPaint.addEventListener('click', paint);
+
+        btnDownload.addEventListener('click', function() {
+            const link = document.createElement('a');
+            link.download = 'hertzmann-art.jpg'; 
+            link.href = canvas.toDataURL('image/jpeg', 0.95);
+            link.click();
+        });
+    </script>
+</body>
+</html>

@@ -1,0 +1,381 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0, user-scalable=yes">
+    <title>Kuwahara Filter</title>
+    <style>
+        body { margin: 0; padding: 0; background-color: #111; overflow: hidden; display: flex; justify-content: center; align-items: center; height: 100vh; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+        canvas { display: block; max-width: 100vw; max-height: 100vh; object-fit: contain; }
+        
+        #control-panel { 
+            position: fixed; left: 0; top: 0; 
+            background-color: rgba(15, 15, 20, 0.85); border: 1px solid rgba(255, 255, 255, 0.1); 
+            backdrop-filter: blur(5px); color: #ddd; 
+            padding: 15px; 
+            border-radius: 8px; box-shadow: 0 4px 10px rgba(0,0,0,0.5); 
+            z-index: 1000; 
+            width: 210px; 
+            will-change: transform;
+        }
+        h2 { margin: 0 0 12px 0; font-size: 16px; color: #fff; text-transform: uppercase; letter-spacing: 0.5px; border-bottom: 1px solid rgba(255,255,255,0.2); padding-bottom: 6px; }
+        .param-row { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; font-size: 14px; }
+        .param-name { display: flex; align-items: center; gap: 6px; }
+        .shortcut { background: #333; color: #ffaa00; padding: 2px 6px; border-radius: 3px; font-family: monospace; font-weight: bold; font-size: 11px; }
+        
+        .param-value { font-family: monospace; font-size: 16px; color: #4CAF50; font-weight: bold; transition: color 0.15s ease; }
+        
+        .instruction { margin-top: 12px; font-size: 12px; color: #888; line-height: 1.4; border-top: 1px solid rgba(255,255,255,0.1); padding-top: 8px; }
+        .action-group { display: flex; gap: 8px; margin-top: 12px; border-top: 1px solid rgba(255,255,255,0.1); padding-top: 12px; }
+        .btn { flex: 1; background-color: #4CAF50; color: white; border: none; padding: 6px 0; border-radius: 4px; cursor: pointer; font-weight: bold; text-align: center; font-size: 13px; }
+        .btn:hover { background-color: #45a049; }
+        .btn-secondary { background-color: #555; }
+        .btn-secondary:hover { background-color: #666; }
+        #file-upload { display: none; }
+        
+        #loading { position: fixed; left: 0; top: 0; background: rgba(0,0,0,0.8); color: #fff; padding: 8px 16px; font-size: 14px; border-radius: 20px; display: none; z-index: 2000; will-change: transform;}
+    </style>
+</head>
+<body>
+
+    <div id="loading">Loading...</div>
+    <canvas id="glcanvas"></canvas>
+
+    <div id="control-panel">
+        <h2>Controls</h2>
+        <div class="param-row"><div class="param-name"><span class="shortcut">1</span> Radius</div><div class="param-value" id="val-radius">6</div></div>
+        <div class="param-row"><div class="param-name"><span class="shortcut">2</span> Anisotropy</div><div class="param-value" id="val-aniso">1.5</div></div>
+        <div class="param-row"><div class="param-name"><span class="shortcut">3</span> Impasto</div><div class="param-value" id="val-impasto">0.0</div></div>
+
+        <div class="instruction">Hold num key & press <b>+/-</b></div>
+
+        <div class="action-group">
+            <label for="file-upload" class="btn btn-secondary">Upload</label>
+            <input type="file" id="file-upload" accept="image/*">
+            <button id="download-btn" class="btn">Download</button>
+        </div>
+    </div>
+
+    <script>
+        const vsSource = `#version 300 es
+        layout(location = 0) in vec2 position;
+        layout(location = 1) in vec2 uv;
+        out vec2 vUv;
+        void main() { vUv = uv; gl_Position = vec4(position, 0.0, 1.0); }`;
+
+        const paintFsSource = `#version 300 es
+        precision highp float;
+        in vec2 vUv;
+        out vec4 fragColor;
+        
+        uniform sampler2D tDiffuse;
+        uniform vec2 resolution;
+        uniform int radius;
+        uniform float anisotropy;
+
+        void main() {
+            vec2 texelSize = 1.0 / resolution;
+            float stepSize = max(1.0, float(radius) * 0.4);
+            vec2 step = texelSize * stepSize;
+            
+            vec3 avgWt = vec3(0.33333); 
+            
+            float E = 0.0, F = 0.0, G = 0.0;
+            for (int j = -1; j <= 1; j++) {
+                for (int i = -1; i <= 1; i++) {
+                    vec2 sUv = vUv + vec2(float(i), float(j)) * step;
+                    
+                    float dx = dot(texture(tDiffuse, sUv + vec2(step.x, 0.0)).rgb, avgWt) - dot(texture(tDiffuse, sUv - vec2(step.x, 0.0)).rgb, avgWt);
+                    float dy = dot(texture(tDiffuse, sUv + vec2(0.0, step.y)).rgb, avgWt) - dot(texture(tDiffuse, sUv - vec2(0.0, step.y)).rgb, avgWt);
+                    
+                    float w = (i == 0 && j == 0) ? 1.0 : (abs(i) + abs(j) == 1 ? 0.5 : 0.25);
+                    E += dx * dx * w; F += dx * dy * w; G += dy * dy * w;
+                }
+            }
+
+            float angle = 0.5 * atan(2.0 * F, E - G) + 1.57079632679;
+            mat2 rotation = mat2(cos(angle), -sin(angle), sin(angle), cos(angle));
+
+            float root = sqrt((E - G) * (E - G) + 4.0 * F * F);
+            float A = root / (E + G + 1e-5);
+            float stretchX = 1.0 + A * anisotropy * 1.5;
+            float stretchY = max(0.1, 1.0 - A * (anisotropy * 0.4));
+
+            float n = float((radius + 1) * (radius + 1));
+            vec3 m[4]; vec3 s_val[4];
+            for (int k = 0; k < 4; ++k) { m[k] = vec3(0.0); s_val[k] = vec3(0.0); }
+
+            for (int j = -radius; j <= radius; ++j) {
+                for (int i = -radius; i <= radius; ++i) {
+                    vec2 offset = rotation * vec2(float(i) * stretchX, float(j) * stretchY);
+                    vec3 col = texture(tDiffuse, vUv + offset * texelSize).rgb;
+                    vec3 col2 = col * col;
+                    if (i <= 0 && j <= 0) { m[0] += col; s_val[0] += col2; }
+                    if (i >= 0 && j <= 0) { m[1] += col; s_val[1] += col2; }
+                    if (i >= 0 && j >= 0) { m[2] += col; s_val[2] += col2; }
+                    if (i <= 0 && j >= 0) { m[3] += col; s_val[3] += col2; }
+                }
+            }
+
+            float minVar = 1e8; vec3 finalColor = vec3(0.0);
+            for (int k = 0; k < 4; ++k) {
+                m[k] /= n; s_val[k] /= n;
+                vec3 variance = abs(s_val[k] - m[k] * m[k]);
+                float totalVar = variance.r + variance.g + variance.b;
+                if (totalVar < minVar) { minVar = totalVar; finalColor = m[k]; }
+            }
+            fragColor = vec4(finalColor, 1.0);
+        }`;
+
+        const mixFsSource = `#version 300 es
+        precision highp float;
+        in vec2 vUv;
+        out vec4 fragColor;
+        
+        uniform sampler2D tBase;
+        uniform sampler2D tDetail;
+        uniform sampler2D tOriginal;
+        uniform vec2 resolution;
+
+        uniform float impastoStrength;
+
+        void main() {
+            vec2 step = 1.0 / resolution;
+            vec3 avgWt = vec3(0.33333); 
+            
+            float tl = dot(texture(tOriginal, vUv + vec2(-1.0, -1.0) * step).rgb, avgWt);
+            float tr = dot(texture(tOriginal, vUv + vec2( 1.0, -1.0) * step).rgb, avgWt);
+            float bl = dot(texture(tOriginal, vUv + vec2(-1.0,  1.0) * step).rgb, avgWt);
+            float br = dot(texture(tOriginal, vUv + vec2( 1.0,  1.0) * step).rgb, avgWt);
+            float dX = (tr + 2.0 * dot(texture(tOriginal, vUv + vec2( 1.0, 0.0) * step).rgb, avgWt) + br) - 
+                       (tl + 2.0 * dot(texture(tOriginal, vUv + vec2(-1.0, 0.0) * step).rgb, avgWt) + bl);
+            float dY = (bl + 2.0 * dot(texture(tOriginal, vUv + vec2( 0.0, 1.0) * step).rgb, avgWt) + br) - 
+                       (tl + 2.0 * dot(texture(tOriginal, vUv + vec2( 0.0,-1.0) * step).rgb, avgWt) + tr);
+            float edge = sqrt(dX * dX + dY * dY);
+
+            float detailWeight = smoothstep(0.15, 0.4, edge);
+            vec3 finalColor = mix(texture(tBase, vUv).rgb, texture(tDetail, vUv).rgb, detailWeight);
+
+            if (impastoStrength > 0.0) {
+                float pLuma = dot(finalColor, avgWt); 
+                float rawDX = dFdx(pLuma);
+                float rawDY = dFdy(pLuma);
+                
+                float edgeStrength = length(vec2(rawDX, rawDY));
+                float edgeMask = smoothstep(0.015, 0.03, edgeStrength);
+                
+                float pDX = clamp(rawDX * edgeMask, -0.05, 0.05);
+                float pDY = clamp(rawDY * edgeMask, -0.05, 0.05);
+                
+                vec3 lightDir = normalize(vec3(1.0, 1.0, 0.8));
+                vec3 normal = normalize(vec3(-pDX * impastoStrength * 15.0, -pDY * impastoStrength * 15.0, 1.0));
+                
+                float diff = max(dot(normal, lightDir), 0.0);
+                finalColor = finalColor * (1.0 + (diff - lightDir.z) * 1.5);
+            }
+
+            fragColor = vec4(finalColor, 1.0);
+        }`;
+
+        const canvas = document.getElementById('glcanvas');
+        const gl = canvas.getContext('webgl2', { preserveDrawingBuffer: true });
+
+        function createShader(gl, type, source) {
+            const shader = gl.createShader(type);
+            gl.shaderSource(shader, source); gl.compileShader(shader);
+            return shader;
+        }
+
+        const vs = createShader(gl, gl.VERTEX_SHADER, vsSource);
+        const paintProgram = gl.createProgram();
+        gl.attachShader(paintProgram, vs); gl.attachShader(paintProgram, createShader(gl, gl.FRAGMENT_SHADER, paintFsSource)); gl.linkProgram(paintProgram);
+
+        const mixProgram = gl.createProgram();
+        gl.attachShader(mixProgram, vs); gl.attachShader(mixProgram, createShader(gl, gl.FRAGMENT_SHADER, mixFsSource)); gl.linkProgram(mixProgram);
+
+        const vertices = new Float32Array([-1, 1, 0, 1, -1, -1, 0, 0, 1, 1, 1, 1, 1, -1, 1, 0]);
+        const vao = gl.createVertexArray(); gl.bindVertexArray(vao);
+        const vbo = gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER, vbo); gl.bufferData(gl.ARRAY_BUFFER, vertices, gl.STATIC_DRAW);
+        gl.enableVertexAttribArray(0); gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 16, 0);
+        gl.enableVertexAttribArray(1); gl.vertexAttribPointer(1, 2, gl.FLOAT, false, 16, 8);
+
+        function createFBO(width, height) {
+            const tex = gl.createTexture();
+            gl.bindTexture(gl.TEXTURE_2D, tex);
+            gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, width, height, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+            const fbo = gl.createFramebuffer(); gl.bindFramebuffer(gl.FRAMEBUFFER, fbo);
+            gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, tex, 0);
+            gl.bindFramebuffer(gl.FRAMEBUFFER, null); 
+            return { fbo, tex };
+        }
+
+        let fboBase, fboDetail;
+        const originalTexture = gl.createTexture();
+        const image = new Image();
+        let isImageLoaded = false;
+        const renderScale = 0.75; 
+
+        const panel = document.getElementById('control-panel');
+        const loadingBox = document.getElementById('loading');
+
+        function updateUIPositions() {
+            if (!window.visualViewport) return;
+            const vv = window.visualViewport;
+            const scale = 1 / vv.scale;
+            
+            const panelX = vv.offsetLeft + 10; 
+            const panelY = vv.offsetTop + (vv.height / 2) - (panel.offsetHeight / 2) * scale;
+            panel.style.transform = `translate3d(${panelX}px, ${panelY}px, 0) scale(${scale})`;
+            panel.style.transformOrigin = 'left top';
+
+            if (loadingBox.style.display === 'block') {
+                const loadX = vv.offsetLeft + (vv.width / 2) - (loadingBox.offsetWidth / 2) * scale;
+                const loadY = vv.offsetTop + 15 * scale; 
+                loadingBox.style.transform = `translate3d(${loadX}px, ${loadY}px, 0) scale(${scale})`;
+                loadingBox.style.transformOrigin = 'left top';
+            }
+        }
+
+        if (window.visualViewport) {
+            window.visualViewport.addEventListener('resize', updateUIPositions);
+            window.visualViewport.addEventListener('scroll', updateUIPositions);
+            requestAnimationFrame(updateUIPositions);
+        }
+
+        function showLoading() {
+            loadingBox.style.display = 'block';
+            updateUIPositions(); 
+        }
+
+        function hideLoading() {
+            loadingBox.style.display = 'none';
+        }
+
+        image.onload = function() {
+            canvas.width = Math.floor(image.width * renderScale);
+            canvas.height = Math.floor(image.height * renderScale);
+            gl.viewport(0, 0, canvas.width, canvas.height);
+            
+            gl.bindTexture(gl.TEXTURE_2D, originalTexture);
+            gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true); 
+            gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, image);
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+            
+            if(fboBase) gl.deleteFramebuffer(fboBase.fbo);
+            if(fboDetail) gl.deleteFramebuffer(fboDetail.fbo);
+            fboBase = createFBO(canvas.width, canvas.height);
+            fboDetail = createFBO(canvas.width, canvas.height);
+
+            isImageLoaded = true;
+            render();
+        };
+        image.src = 'photo.jpg';
+
+        const params = {
+            radius: { val: 1, min: 1, max: 15, step: 1, ui: document.getElementById('val-radius') },
+            aniso: { val: 0.0, min: 0.0, max: 3.0, step: 0.1, ui: document.getElementById('val-aniso') },
+            impasto: { val: 0.0, min: 0.0, max: 1.0, step: 0.1, ui: document.getElementById('val-impasto') }
+        };
+
+        const keyMap = { '1': 'radius', '2': 'aniso', '3': 'impasto' };
+        const pressedKeys = new Set();
+        let renderTimeout = null;
+
+        function updateUI() {
+            params.radius.ui.textContent = params.radius.val;
+            params.aniso.ui.textContent = params.aniso.val.toFixed(1);
+            params.impasto.ui.textContent = params.impasto.val.toFixed(1);
+        }
+        updateUI();
+
+        function updateHighlight() {
+            for (let key in keyMap) {
+                const paramName = keyMap[key];
+                if (pressedKeys.has(key)) {
+                    params[paramName].ui.style.color = '#ff4444';
+                } else {
+                    params[paramName].ui.style.color = '#4CAF50';
+                }
+            }
+        }
+
+        function modifyParam(paramKey, isIncrease) {
+            const p = params[paramKey];
+            p.val = isIncrease ? Math.min(p.max, p.val + p.step) : Math.max(p.min, p.val - p.step);
+            p.val = Math.round(p.val * 10) / 10; 
+            updateUI();
+
+            if (renderTimeout) clearTimeout(renderTimeout);
+            showLoading();
+            renderTimeout = setTimeout(() => { if (isImageLoaded) render(); }, 150); 
+        }
+
+        window.addEventListener('keydown', function(e) {
+            pressedKeys.add(e.key);
+            updateHighlight(); 
+
+            const isIncrease = e.key === '=' || e.key === '+';
+            const isDecrease = e.key === '-';
+            if (!isIncrease && !isDecrease) return;
+
+            for (let key in keyMap) {
+                if (pressedKeys.has(key)) modifyParam(keyMap[key], isIncrease);
+            }
+        });
+
+        window.addEventListener('keyup', e => {
+            pressedKeys.delete(e.key);
+            updateHighlight(); 
+        });
+
+        document.getElementById('file-upload').addEventListener('change', function(e) {
+            const file = e.target.files[0];
+            if (!file) return;
+            showLoading();
+            const reader = new FileReader();
+            reader.onload = function(event) { image.src = event.target.result; };
+            reader.readAsDataURL(file);
+        });
+
+        document.getElementById('download-btn').addEventListener('click', function() {
+            if (!isImageLoaded) return;
+            const link = document.createElement('a');
+            link.download = 'oil-painting.jpg';
+            link.href = canvas.toDataURL('image/jpeg', 0.95);
+            link.click();
+        });
+
+        function render() {
+            gl.bindVertexArray(vao);
+
+            gl.bindFramebuffer(gl.FRAMEBUFFER, fboBase.fbo);
+            gl.useProgram(paintProgram);
+            gl.uniform2f(gl.getUniformLocation(paintProgram, "resolution"), canvas.width, canvas.height);
+            gl.uniform1f(gl.getUniformLocation(paintProgram, "anisotropy"), params.aniso.val);
+            gl.uniform1i(gl.getUniformLocation(paintProgram, "radius"), params.radius.val); 
+            gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, originalTexture);
+            gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+
+            gl.bindFramebuffer(gl.FRAMEBUFFER, fboDetail.fbo);
+            let detailRadius = Math.max(1, Math.floor(params.radius.val / 3));
+            gl.uniform1i(gl.getUniformLocation(paintProgram, "radius"), detailRadius);
+            gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+
+            gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+            gl.useProgram(mixProgram);
+            gl.uniform2f(gl.getUniformLocation(mixProgram, "resolution"), canvas.width, canvas.height);
+            gl.uniform1f(gl.getUniformLocation(mixProgram, "impastoStrength"), params.impasto.val);
+            
+            gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, fboBase.tex); gl.uniform1i(gl.getUniformLocation(mixProgram, "tBase"), 0);
+            gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D, fboDetail.tex); gl.uniform1i(gl.getUniformLocation(mixProgram, "tDetail"), 1);
+            gl.activeTexture(gl.TEXTURE2); gl.bindTexture(gl.TEXTURE_2D, originalTexture); gl.uniform1i(gl.getUniformLocation(mixProgram, "tOriginal"), 2);
+
+            gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+            hideLoading();
+        }
+    </script>
+</body>
+</html>

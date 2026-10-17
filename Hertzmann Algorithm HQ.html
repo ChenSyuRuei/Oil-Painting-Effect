@@ -1,0 +1,395 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0, user-scalable=yes">
+    <title>Hertzmann Algorithm High Quality</title>
+    <style>
+        body { 
+            margin: 0; 
+            padding: 0; 
+            background: #000; 
+            color: #fff; 
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; 
+            overflow: hidden; 
+            width: 100vw; 
+            height: 100vh; 
+        }
+        
+        canvas { 
+            display: block; 
+            width: 100%; 
+            height: 100%; 
+            object-fit: contain; 
+            background: #000;
+        }
+
+        #toolbar { 
+            position: fixed; 
+            left: 0; 
+            top: 0; 
+            background: rgba(15, 15, 20, 0.85); 
+            backdrop-filter: blur(5px); 
+            padding: 10px 15px; 
+            border-radius: 8px;
+            display: flex; 
+            gap: 10px; 
+            align-items: center; 
+            border: 1px solid rgba(255, 255, 255, 0.1); 
+            box-shadow: 0 4px 15px rgba(0,0,0,0.5);
+            z-index: 1000; 
+            will-change: transform;
+        }
+
+        .btn { 
+            background: #4CAF50; 
+            color: white; 
+            border: none; 
+            padding: 6px 12px; 
+            border-radius: 4px; 
+            cursor: pointer; 
+            font-weight: bold; 
+            font-size: 13px;
+            transition: background 0.2s, opacity 0.2s;
+        }
+        .btn:hover:not(:disabled) { background: #45a049; }
+        .btn:disabled { background: #555; cursor: not-allowed; opacity: 0.7; }
+        
+        /* 讓狀態文字變得非常簡短、低調 */
+        .status { 
+            font-family: monospace; 
+            color: #ffaa00; 
+            font-size: 12px;
+            font-weight: bold;
+            margin-left: 5px;
+            min-width: 40px;
+        }
+    </style>
+</head>
+<body>
+
+    <div id="toolbar">
+        <input type="file" id="file-upload" accept="image/*" style="display: none;">
+        <button class="btn" onclick="document.getElementById('file-upload').click()">Upload</button>
+        <button class="btn" id="btn-paint" disabled>Start</button>
+        <button class="btn" id="btn-download" disabled>Download</button>
+        <div class="status" id="status-text">Wait</div>
+    </div>
+
+    <canvas id="canvas"></canvas>
+
+    <script>
+        const canvas = document.getElementById('canvas');
+        const ctx = canvas.getContext('2d', { willReadFrequently: true });
+        const statusText = document.getElementById('status-text');
+        const btnPaint = document.getElementById('btn-paint');
+        const btnDownload = document.getElementById('btn-download');
+        
+        let sourceImage = new Image();
+        let sourceData = null; 
+        let width = 0, height = 0;
+
+        // --- 基準參數設定 (對應 800px 基準解析度) ---
+        const baseConfig = {
+            radii: [32, 16, 8, 4, 2],  
+            threshold: 15,            
+            maxStrokeLength: 20,      
+            minStrokeLength: 4,
+            gridSize: 0.7,            
+            curvatureFilter: 0.9,     
+            blurFactor: 0.5
+        };
+        
+        let currentRadii = []; // 儲存動態放大後的筆刷大小
+
+        function initCanvas() {
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
+            ctx.fillStyle = '#000';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+        }
+        initCanvas();
+
+        const toolbar = document.getElementById('toolbar');
+        function updateUIPositions() {
+            if (!window.visualViewport) return;
+            const vv = window.visualViewport;
+            const scale = 1 / vv.scale;
+            const x = vv.offsetLeft + 20 * scale; 
+            const y = vv.offsetTop + 20 * scale; 
+            toolbar.style.transform = `translate3d(${x}px, ${y}px, 0) scale(${scale})`;
+            toolbar.style.transformOrigin = 'left top';
+        }
+
+        if (window.visualViewport) {
+            window.visualViewport.addEventListener('resize', updateUIPositions);
+            window.visualViewport.addEventListener('scroll', updateUIPositions);
+            requestAnimationFrame(updateUIPositions);
+        }
+
+        function getPixel(imgData, x, y) {
+            if (x < 0) x = 0; if (x >= width) x = width - 1;
+            if (y < 0) y = 0; if (y >= height) y = height - 1;
+            let i = (y * width + x) * 4;
+            return [imgData.data[i], imgData.data[i+1], imgData.data[i+2]];
+        }
+
+        function getLuminance(rgb) {
+            return 0.30 * rgb[0] + 0.59 * rgb[1] + 0.11 * rgb[2]; 
+        }
+
+        function computeGradientData(imgData) {
+            let gradMag = new Float32Array(width * height);
+            let gradDir = new Float32Array(width * height * 2); 
+
+            for (let y = 1; y < height - 1; y++) {
+                for (let x = 1; x < width - 1; x++) {
+                    let tl = getLuminance(getPixel(imgData, x-1, y-1));
+                    let tc = getLuminance(getPixel(imgData, x, y-1));
+                    let tr = getLuminance(getPixel(imgData, x+1, y-1));
+                    let ml = getLuminance(getPixel(imgData, x-1, y));
+                    let mr = getLuminance(getPixel(imgData, x+1, y));
+                    let bl = getLuminance(getPixel(imgData, x-1, y+1));
+                    let bc = getLuminance(getPixel(imgData, x, y+1));
+                    let br = getLuminance(getPixel(imgData, x+1, y+1));
+
+                    let dx = (tr + 2*mr + br) - (tl + 2*ml + bl);
+                    let dy = (bl + 2*bc + br) - (tl + 2*tc + tr);
+                    
+                    let mag = Math.sqrt(dx*dx + dy*dy);
+                    let i = y * width + x;
+                    gradMag[i] = mag;
+                    if (mag > 0) {
+                        gradDir[i*2] = dx / mag;
+                        gradDir[i*2 + 1] = dy / mag;
+                    }
+                }
+            }
+            return { mag: gradMag, dir: gradDir };
+        }
+
+        function blurImage(imgData, radius) {
+            if (radius <= 0) return imgData;
+            let tempCanvas = document.createElement('canvas');
+            tempCanvas.width = width; tempCanvas.height = height;
+            let tCtx = tempCanvas.getContext('2d');
+            tCtx.putImageData(imgData, 0, 0);
+            tCtx.globalAlpha = 0.5;
+            for(let i = -radius; i <= radius; i+=Math.max(1, radius/2)){
+                tCtx.drawImage(tempCanvas, i, 0);
+                tCtx.drawImage(tempCanvas, 0, i);
+            }
+            tCtx.globalAlpha = 1.0;
+            return tCtx.getImageData(0, 0, width, height);
+        }
+
+        function colorDiff(c1, c2) {
+            let r = c1[0] - c2[0], g = c1[1] - c2[1], b = c1[2] - c2[2];
+            return Math.sqrt(r*r + g*g + b*b); 
+        }
+
+        function shuffleArray(array) {
+            for (let i = array.length - 1; i > 0; i--) {
+                const j = Math.floor(Math.random() * (i + 1));
+                [array[i], array[j]] = [array[j], array[i]];
+            }
+        }
+
+        async function paint() {
+            btnPaint.disabled = true;
+            btnDownload.disabled = true; 
+            
+            ctx.fillStyle = '#000';
+            ctx.fillRect(0, 0, width, height);
+            sourceData = ctx.getImageData(0, 0, width, height);
+            
+            let hiddenCanvas = document.createElement('canvas');
+            hiddenCanvas.width = width; hiddenCanvas.height = height;
+            let hCtx = hiddenCanvas.getContext('2d');
+            hCtx.drawImage(sourceImage, 0, 0, width, height);
+            let originalImageData = hCtx.getImageData(0, 0, width, height);
+
+            // 使用動態計算出的 currentRadii 進行作畫
+            for (let R of currentRadii) {
+                statusText.innerText = `R=${R}`; 
+                let blurRadius = Math.round(R * baseConfig.blurFactor);
+                let refImage = blurImage(originalImageData, blurRadius);
+                let gradient = computeGradientData(refImage);
+                await paintLayer(refImage, gradient, R);
+            }
+
+            statusText.innerText = "Done"; 
+            btnPaint.disabled = false;
+            btnDownload.disabled = false; 
+        }
+
+        async function paintLayer(refImage, gradient, R) {
+            let strokes = [];
+            let currentCanvasData = ctx.getImageData(0, 0, width, height);
+            let grid = Math.max(1, Math.round(baseConfig.gridSize * R)); 
+
+            for (let y = 0; y < height; y += grid) {
+                for (let x = 0; x < width; x += grid) {
+                    let refColor = getPixel(refImage, x, y);
+                    let canvasColor = getPixel(currentCanvasData, x, y);
+                    
+                    let isBaseLayer = (R === currentRadii[0]);
+                    let error = isBaseLayer ? 99999 : colorDiff(refColor, canvasColor);
+
+                    if (error > baseConfig.threshold) {
+                        let stroke = makeSplineStroke(x, y, R, refImage, currentCanvasData, gradient);
+                        if (stroke) strokes.push(stroke); 
+                    }
+                }
+            }
+
+            // 依然保留隨機打亂，確保油畫筆觸交疊自然
+            shuffleArray(strokes);
+
+            // 【極速版修改】：刪除原本的 batchSize 與 await requestAnimationFrame
+            // 直接用一個迴圈把所有筆觸瞬間塞進 Canvas 的渲染佇列中
+            for (let stroke of strokes) {
+                drawStroke(stroke);
+            }
+            
+            // 注意：因為沒有了 await 暫停，這個函式會在一瞬間執行完畢，
+            // 但瀏覽器可能需要幾百毫秒才能把所有 Canvas 繪圖指令真正畫到畫面上。
+        }
+
+        function makeSplineStroke(x0, y0, R, refImage, canvasData, gradient) {
+            let strokeColor = getPixel(refImage, x0, y0); 
+            let points = [{x: x0, y: y0}];
+            let x = x0, y = y0;
+            let lastDx = 0, lastDy = 0; 
+
+            for (let i = 1; i <= baseConfig.maxStrokeLength; i++) { 
+                let px = Math.round(x), py = Math.round(y);
+                if (px < 0 || px >= width || py < 0 || py >= height) break;
+
+                if (i > baseConfig.minStrokeLength) {
+                    let currentColor = getPixel(refImage, px, py);
+                    let canvasColor = getPixel(canvasData, px, py);
+                    if (colorDiff(currentColor, canvasColor) < colorDiff(currentColor, strokeColor)) {
+                        break;
+                    }
+                }
+
+                let idx = py * width + px;
+                let gx, gy;
+                
+                if (gradient.mag[idx] === 0) {
+                    if (lastDx === 0 && lastDy === 0) {
+                        let angle = Math.random() * Math.PI * 2;
+                        gx = Math.cos(angle);
+                        gy = Math.sin(angle);
+                    } else {
+                        gx = lastDy;
+                        gy = -lastDx;
+                    }
+                } else {
+                    gx = gradient.dir[idx * 2];
+                    gy = gradient.dir[idx * 2 + 1];
+                }
+
+                let dx = -gy;
+                let dy = gx;
+
+                if (lastDx * dx + lastDy * dy < 0) {
+                    dx = -dx; dy = -dy;
+                }
+
+                let fc = baseConfig.curvatureFilter;
+                dx = fc * dx + (1 - fc) * lastDx;
+                dy = fc * dy + (1 - fc) * lastDy;
+                
+                let mag = Math.sqrt(dx*dx + dy*dy);
+                dx /= mag; dy /= mag; 
+
+                x = x + R * dx;
+                y = y + R * dy;
+                
+                lastDx = dx; lastDy = dy; 
+                points.push({x: x, y: y}); 
+            }
+
+            if (points.length < 2) {
+                points.push({x: points[0].x + 0.1, y: points[0].y});
+            }
+
+            return { points: points, color: strokeColor, radius: R };
+        }
+
+        function drawStroke(stroke) {
+            let path = new Path2D();
+            path.moveTo(stroke.points[0].x, stroke.points[0].y);
+            
+            for (let i = 1; i < stroke.points.length - 1; i++) {
+                let xc = (stroke.points[i].x + stroke.points[i + 1].x) / 2;
+                let yc = (stroke.points[i].y + stroke.points[i + 1].y) / 2;
+                path.quadraticCurveTo(stroke.points[i].x, stroke.points[i].y, xc, yc);
+            }
+            let lastPoint = stroke.points[stroke.points.length - 1];
+            path.lineTo(lastPoint.x, lastPoint.y);
+
+            // 適度減少刷毛數量，以平衡高解析度帶來的效能壓力
+            let numBristles = Math.max(2, Math.floor(stroke.radius)); 
+            ctx.lineCap = 'round';
+            ctx.lineJoin = 'round';
+
+            for (let i = 0; i < numBristles; i++) {
+                ctx.save();
+                let offsetX = (Math.random() - 0.5) * stroke.radius;
+                let offsetY = (Math.random() - 0.5) * stroke.radius;
+                ctx.translate(offsetX, offsetY);
+                
+                ctx.lineWidth = Math.random() * 1.5 + 0.2;
+                let alpha = Math.random() * 0.4 + 0.1; 
+                ctx.strokeStyle = `rgba(${stroke.color[0]}, ${stroke.color[1]}, ${stroke.color[2]}, ${alpha})`;
+                
+                ctx.stroke(path);
+                ctx.restore();
+            }
+        }
+
+        document.getElementById('file-upload').addEventListener('change', function(e) {
+            let file = e.target.files[0];
+            if (!file) return;
+            let reader = new FileReader();
+            reader.onload = function(event) {
+                sourceImage.onload = function() {
+                    // 【終極解放：移除 maxDim 限制，完全使用原圖解析度！】
+                    width = sourceImage.width;
+                    height = sourceImage.height;
+                    
+                    canvas.width = width;
+                    canvas.height = height;
+                    ctx.drawImage(sourceImage, 0, 0, width, height);
+
+                    // 【核心修改：動態筆觸比例縮放】
+                    // 假設原先的參數是在 800px 下看起來最完美，以此為基準放大
+                    let scaleRatio = Math.max(width, height) / 800.0;
+                    if (scaleRatio < 1) scaleRatio = 1; // 避免圖片太小時筆觸小於 1
+
+                    // 將陣列中的每個半徑乘上比例，並四捨五入確保至少為 1
+                    currentRadii = baseConfig.radii.map(r => Math.max(1, Math.round(r * scaleRatio)));
+                    
+                    statusText.innerText = "Ready"; 
+                    btnPaint.disabled = false;
+                    btnDownload.disabled = true; 
+                }
+                sourceImage.src = event.target.result;
+            }
+            reader.readAsDataURL(file);
+        });
+
+        btnPaint.addEventListener('click', paint);
+
+        btnDownload.addEventListener('click', function() {
+            const link = document.createElement('a');
+            link.download = 'oil-painting-HQ.jpg'; 
+            link.href = canvas.toDataURL('image/jpeg', 1.0); // 輸出 100% 品質的 JPEG
+            link.click();
+        });
+    </script>
+</body>
+</html>
