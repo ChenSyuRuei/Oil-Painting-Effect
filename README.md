@@ -12,19 +12,19 @@
 
 | 異向性桑原濾波器 (Anisotropic Kuwahara) | Hertzmann 筆觸演算法 (Painterly Rendering) |
 | :---: | :---: |
-| ![Kuwahara Result](images/final_kuwahara.jpg) | ![Hertzmann Result](images/final_hertzmann.jpg) |
+| <img src="images/final_kuwahara.jpg" width="100%" alt="Kuwahara Result" /> | <img src="images/final_hertzmann.jpg" width="100%" alt="Hertzmann Result" /> |
 | *特點：邊緣銳利平滑、流暢方向性、厚塗浮雕立體感* | *特點：多尺度樣條曲線筆觸、隨機毛刷質感、手繪層次感* |
 
 ### 2. 演算法細節與風格比較
 
 | 異向性效果比較 (Anisotropy) | 厚塗效果比較 (Impasto) |
 | :---: | :---: |
-| ![Anisotropy Comparison](images/kuwahara_anisotropy.jpg) | ![Impasto Comparison](images/kuwahara_impasto.jpg) |
+| <img src="images/kuwahara_anisotropy.jpg" width="100%" alt="Anisotropy Comparison" /> | <img src="images/kuwahara_impasto.jpg" width="100%" alt="Impasto Comparison" /> |
 | *利用結構張量引導筆刷沿物體邊緣切線流動* | *以亮度梯度法向量計算表面光照，重現油彩立體厚度* |
 
 | 表現主義風格 (Expressionism) | 點描派風格 (Pointillism) |
 | :---: | :---: |
-| ![Expressionism Style](images/hertzmann_expressionism.jpg) | ![Pointillism Style](images/hertzmann_pointillism.jpg) |
+| <img src="images/hertzmann_expressionism.jpg" width="100%" alt="Expressionism Style" /> | <img src="images/hertzmann_pointillism.jpg" width="100%" alt="Pointillism Style" /> |
 | *降低曲率過濾器保留慣性，筆觸狂放奔放* | *縮短筆劃長度並提高色彩容忍門檻，形成色點堆疊* |
 
 ---
