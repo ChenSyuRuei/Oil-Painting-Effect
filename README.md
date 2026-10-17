@@ -10,22 +10,52 @@
 
 ### 1. 兩大演算法成品對比
 
-| 異向性桑原濾波器 (Anisotropic Kuwahara) | Hertzmann 筆觸演算法 (Painterly Rendering) |
-| :---: | :---: |
-| <img src="images/final_kuwahara.jpg" width="100%" alt="Kuwahara Result" /> | <img src="images/final_hertzmann.jpg" width="100%" alt="Hertzmann Result" /> |
-| *特點：邊緣銳利平滑、流暢方向性、厚塗浮雕立體感* | *特點：多尺度樣條曲線筆觸、隨機毛刷質感、手繪層次感* |
+<table>
+  <tr>
+    <th width="50%" align="center">異向性桑原濾波器 (Anisotropic Kuwahara)</th>
+    <th width="50%" align="center">Hertzmann 筆觸演算法 (Painterly Rendering)</th>
+  </tr>
+  <tr>
+    <td width="50%"><img src="images/compare_kuwahara.jpg" alt="Kuwahara Result" width="100%"></td>
+    <td width="50%"><img src="images/compare_hertzmann.jpg" alt="Hertzmann Result" width="100%"></td>
+  </tr>
+  <tr>
+    <td align="center"><em>特點：邊緣銳利平滑、流暢方向性、厚塗浮雕立體感</em></td>
+    <td align="center"><em>特點：多尺度樣條曲線筆觸、隨機毛刷質感、手繪層次感</em></td>
+  </tr>
+</table>
 
 ### 2. 演算法細節與風格比較
 
-| 異向性效果比較 (Anisotropy) | 厚塗效果比較 (Impasto) |
-| :---: | :---: |
-| <img src="images/kuwahara_anisotropy.jpg" width="100%" alt="Anisotropy Comparison" /> | <img src="images/kuwahara_impasto.jpg" width="100%" alt="Impasto Comparison" /> |
-| *利用結構張量引導筆刷沿物體邊緣切線流動* | *以亮度梯度法向量計算表面光照，重現油彩立體厚度* |
+<table>
+  <tr>
+    <th width="50%" align="center">異向性效果比較 (Anisotropy)</th>
+    <th width="50%" align="center">厚塗效果比較 (Impasto)</th>
+  </tr>
+  <tr>
+    <td width="50%"><img src="images/kuwahara_anisotropy.jpg" alt="Anisotropy Comparison" width="100%"></td>
+    <td width="50%"><img src="images/kuwahara_impasto.jpg" alt="Impasto Comparison" width="100%"></td>
+  </tr>
+  <tr>
+    <td align="center"><em>利用結構張量引導筆刷沿物體邊緣切線流動</em></td>
+    <td align="center"><em>以亮度梯度法向量計算表面光照，重現油彩立體厚度</em></td>
+  </tr>
+</table>
 
-| 表現主義風格 (Expressionism) | 點描派風格 (Pointillism) |
-| :---: | :---: |
-| <img src="images/hertzmann_expressionism.jpg" width="100%" alt="Expressionism Style" /> | <img src="images/hertzmann_pointillism.jpg" width="100%" alt="Pointillism Style" /> |
-| *降低曲率過濾器保留慣性，筆觸狂放奔放* | *縮短筆劃長度並提高色彩容忍門檻，形成色點堆疊* |
+<table>
+  <tr>
+    <th width="50%" align="center">表現主義風格 (Expressionism)</th>
+    <th width="50%" align="center">點描派風格 (Pointillism)</th>
+  </tr>
+  <tr>
+    <td width="50%"><img src="images/hertzmann_expressionism.jpg" alt="Expressionism Style" width="100%"></td>
+    <td width="50%"><img src="images/hertzmann_pointillism.jpg" alt="Pointillism Style" width="100%"></td>
+  </tr>
+  <tr>
+    <td align="center"><em>降低曲率過濾器保留慣性，筆觸狂放奔放</em></td>
+    <td align="center"><em>縮短筆劃長度並提高色彩容忍門檻，形成色點堆疊</em></td>
+  </tr>
+</table>
 
 ---
 
