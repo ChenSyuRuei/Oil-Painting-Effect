@@ -1,4 +1,4 @@
-# Non-Photorealistic Rendering: Oil Painting Effects
+# Oil Painting Effect: Kuwahara and Hertzmann methods
 
 本專案實作了非真實感繪製（Non-Photorealistic Rendering, NPR）中的兩種經典油畫風格化演算法：**異向性桑原濾波器（Anisotropic Kuwahara Filter）** 與 **基於筆觸的多尺度繪製演算法（Hertzmann Painterly Rendering Algorithm）**。
 
